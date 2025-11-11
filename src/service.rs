@@ -1,10 +1,13 @@
+#![allow(unused)]
+
 use anyhow::Result;
 use reqwest::Client;
 use rmcp::{
-    handler::server::{wrapper::Parameters, ServerHandler, tool::ToolRouter},
-    model::{CallToolResult, Content, Implementation, ProtocolVersion, ServerCapabilities, ServerInfo},
-    tool, tool_handler, tool_router,
-    ErrorData as McpError,
+    handler::server::{tool::ToolRouter, wrapper::Parameters, ServerHandler},
+    model::{
+        CallToolResult, Content, Implementation, ProtocolVersion, ServerCapabilities, ServerInfo,
+    },
+    tool, tool_handler, tool_router, ErrorData as McpError,
 };
 use std::sync::Arc;
 
@@ -79,9 +82,7 @@ pub struct WebPublication {
 impl WebPublication {
     pub fn new() -> Result<Self> {
         let config = ApiConfig::from_env()?;
-        let client = Client::builder()
-            .cookie_store(true)
-            .build()?;
+        let client = Client::builder().cookie_store(true).build()?;
 
         Ok(Self {
             client: Arc::new(client),
@@ -100,7 +101,8 @@ impl WebPublication {
 
         tracing::info!("Making request to: {}", url);
 
-        let mut request = self.client
+        let mut request = self
+            .client
             .get(&url)
             .header("Content-Type", "application/json")
             .header("Cookie", format!("WP_token={}", self.config.wp_token));
@@ -109,9 +111,10 @@ impl WebPublication {
             request = request.query(&[(key, value)]);
         }
 
-        let response = request.send().await.map_err(|e| {
-            McpError::internal_error(format!("Request failed: {}", e), None)
-        })?;
+        let response = request
+            .send()
+            .await
+            .map_err(|e| McpError::internal_error(format!("Request failed: {}", e), None))?;
 
         if !response.status().is_success() {
             return Err(McpError::internal_error(
@@ -143,7 +146,16 @@ impl ServerHandler for WebPublication {
             },
             instructions: Some(
                 "A Webpublication API service that provides access to various workspace management, \
-                generation, customization, and other Webpublication platform features."
+                generation, customization, and other Webpublication platform features.\n\n\
+                **IMPORTANT WORKFLOW**:\n\
+                - If resourceGId parameter is not provided for get_resource, OR if publicationGId parameter \
+                is not provided for get_publication_settings, you MUST first call get_recent_resources to \
+                retrieve the globalId of the desired publication.\n\
+                - When the user provides a publication name, it corresponds to the 'label' field in the \
+                get_recent_resources response. Match the user-provided name to the label field.\n\
+                - Use the globalId from get_recent_resources as the resource_gid parameter for both \
+                get_resource and get_publication_settings tools. \
+                When a publication is found by name/label, always mention its globalId in your first sentence."
                     .to_string(),
             ),
         }
@@ -152,7 +164,11 @@ impl ServerHandler for WebPublication {
 
 #[tool_router]
 impl WebPublication {
-    #[tool(description = "Get a resource/publication from the Webpublication API. Provide the resource/publication GID (e.g., 2473843) to fetch resource information.")]
+    #[tool(
+        description = "Get a resource/publication from the Webpublication API. \
+    Provide the globalId from get_recent_resources, if not supplied by the user, as the resource_gid parameter (e.g., 2473843) \
+    to fetch detailed resource information."
+    )]
     async fn get_resource(
         &self,
         Parameters(request): Parameters<GetResourceRequest>,
@@ -176,12 +192,19 @@ impl WebPublication {
         Ok(CallToolResult::success(vec![Content::text(formatted)]))
     }
 
-    #[tool(description = "Get the publication settings from the Webpublication API. Provide the resource/publication GID (e.g., 2473843) to fetch resource information.")]
+    #[tool(
+        description = "Get the publication settings from the Webpublication API. \
+    Provide the globalId from get_recent_resources, if not supplied by the user, \
+    as the resource_gid parameter (e.g., 2473843) to fetch detailed resource settings"
+    )]
     async fn get_publication_settings(
         &self,
         Parameters(request): Parameters<GetResourceRequest>,
     ) -> Result<CallToolResult, McpError> {
-        tracing::info!("Getting publication settings with GID: {}", request.resource_gid);
+        tracing::info!(
+            "Getting publication settings with GID: {}",
+            request.resource_gid
+        );
 
         let resource_gid_str = request.resource_gid.to_string();
         let params = [
@@ -191,6 +214,35 @@ impl WebPublication {
 
         let response = self
             .make_get_request(ApiEndpoint::GenerationWs, "getPublicationSettings", &params)
+            .await?;
+
+        let formatted = serde_json::to_string_pretty(&response.data).map_err(|e| {
+            McpError::internal_error(format!("Failed to format response: {}", e), None)
+        })?;
+
+        Ok(CallToolResult::success(vec![Content::text(formatted)]))
+    }
+
+    #[tool(
+        description = "Get the 20 most recent publications from the Webpublication API. \
+    Use their globalId as the resource_gid or publicationGId parameter for get_resource or get_publication_settings to get more info about the publication. \
+    The name of the publication is its label.\
+    When a publication is found by name/label, always mention its globalId in your first sentence."
+    )]
+    async fn get_recent_resources(&self) -> Result<CallToolResult, McpError> {
+        let params = [
+            ("clientId", self.config.client_id.as_str()),
+            ("include", "PUBLICATION"),
+            ("itemsPerPage", "20"),
+            ("pageNum", "0"),
+        ];
+
+        let response = self
+            .make_get_request(
+                ApiEndpoint::WorkspaceManagerWs,
+                "getRecentResources",
+                &params,
+            )
             .await?;
 
         let formatted = serde_json::to_string_pretty(&response.data).map_err(|e| {
