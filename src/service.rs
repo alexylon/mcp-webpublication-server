@@ -180,7 +180,7 @@ impl WebPublication {
         Ok(data)
     }
 
-    async fn make_get_image_request(
+    async fn make_get_file_request(
         &self,
         rel_url: &str,
         params: &[(&str, &str)],
@@ -242,7 +242,8 @@ impl ServerHandler for WebPublication {
                 - Use the globalId from get_recent_resources as the resource_gid parameter for both \
                 get_resource and get_publication_settings tools. \
                 When a publication is found by name/label, always mention its globalId in your first sentence. \
-                The cover image of a publication is retrieved by get_cover_image and the parameter is retrieved by get_publication_settings as coverImage.relUrl"
+                The cover image of a publication is retrieved by get_cover_image and the parameter is retrieved by get_publication_settings as coverImage.relUrl \
+                The returned month value is zero-based. Add 1 to it to get the calendar month. For example, 'month': 5 represents June (5 + 1 = 6)."
                     .to_string(),
             ),
         }
@@ -252,9 +253,39 @@ impl ServerHandler for WebPublication {
 #[tool_router]
 impl WebPublication {
     #[tool(
+        description = "Get the 20 most recent publications from the Webpublication API. \
+    Use their globalId as the resource_gid or publicationGId parameter for get_resource or get_publication_settings to get more info about the publication. \
+    The name of the publication is its label.\
+    When a publication is found by name/label, always mention its globalId in your first sentence."
+    )]
+    async fn get_recent_resources(&self) -> Result<CallToolResult, McpError> {
+        let params = [
+            ("clientId", self.config.client_id.as_str()),
+            ("include", "PUBLICATION"),
+            ("itemsPerPage", "20"),
+            ("pageNum", "0"),
+        ];
+
+        let response = self
+            .make_get_request(
+                ApiEndpoint::WorkspaceManagerWs,
+                "getRecentResources",
+                &params,
+            )
+            .await?;
+
+        let formatted = serde_json::to_string_pretty(&response.data).map_err(|e| {
+            McpError::internal_error(format!("Failed to format response: {}", e), None)
+        })?;
+
+        Ok(CallToolResult::success(vec![Content::text(formatted)]))
+    }
+
+    #[tool(
         description = "Get a resource/publication from the Webpublication API. \
     Provide the globalId from get_recent_resources, if not supplied by the user, as the resource_gid parameter (e.g., 2473843) \
-    to fetch detailed resource information."
+    to fetch detailed resource information.\
+    The returned month value is zero-based. Add 1 to it to get the calendar month. For example, 'month': 5 represents June (5 + 1 = 6)."
     )]
     async fn get_resource(
         &self,
@@ -301,35 +332,6 @@ impl WebPublication {
 
         let response = self
             .make_get_request(ApiEndpoint::GenerationWs, "getPublicationSettings", &params)
-            .await?;
-
-        let formatted = serde_json::to_string_pretty(&response.data).map_err(|e| {
-            McpError::internal_error(format!("Failed to format response: {}", e), None)
-        })?;
-
-        Ok(CallToolResult::success(vec![Content::text(formatted)]))
-    }
-
-    #[tool(
-        description = "Get the 20 most recent publications from the Webpublication API. \
-    Use their globalId as the resource_gid or publicationGId parameter for get_resource or get_publication_settings to get more info about the publication. \
-    The name of the publication is its label.\
-    When a publication is found by name/label, always mention its globalId in your first sentence."
-    )]
-    async fn get_recent_resources(&self) -> Result<CallToolResult, McpError> {
-        let params = [
-            ("clientId", self.config.client_id.as_str()),
-            ("include", "PUBLICATION"),
-            ("itemsPerPage", "20"),
-            ("pageNum", "0"),
-        ];
-
-        let response = self
-            .make_get_request(
-                ApiEndpoint::WorkspaceManagerWs,
-                "getRecentResources",
-                &params,
-            )
             .await?;
 
         let formatted = serde_json::to_string_pretty(&response.data).map_err(|e| {
@@ -399,7 +401,7 @@ impl WebPublication {
         ];
 
         let image_bytes = self
-            .make_get_image_request(&request.rel_url, &params)
+            .make_get_file_request(&request.rel_url, &params)
             .await?;
 
         // Encode image bytes as base64

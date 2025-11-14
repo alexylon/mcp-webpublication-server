@@ -4,8 +4,11 @@ MCP server for Webpublication API - provides access to workspace management, gen
 
 ## Features
 
+- **get_recent_resources**: Get the last 20 publications
 - **get_resource**: Get resource/publication information
 - **get_publication_settings**: Get publication settings and configuration
+- **toggle_wishlist**: Enable/disable Wishlist
+- **get_cover_image**: Get the publication's cover image as bytes and encode it to base64 so the AI can see it
 - Cookie-based authentication with WP_token
 - Support for multiple API endpoints (workspaceManagerWs, generationWs, customizationWs, etc.)
 
@@ -36,9 +39,13 @@ npx @modelcontextprotocol/inspector cargo run
 npx @modelcontextprotocol/inspector ./target/release/mcp-webpublication-server-poc
 ```
 
-### Claude Desktop
+### Using Claude
 
-Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
+#### Claude Desktop
+Add the following to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
+
+#### Claude CLI
+Add the following to `.mcp.json` at the root of the current project:
 
 ```json
 {
@@ -47,8 +54,10 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
       "command": "/path/to/mcp-webpublication-server/target/release/mcp-webpublication-server",
       "env": {
         "API_URL": "your_api_url",
+        "DRIVE_URL": "your_drive_url",
         "CLIENT_ID": "your_client_id",
-        "WP_TOKEN": "your_wp_token"
+        "WP_TOKEN": "your_wp_token",
+        "DRIVE_TOKEN": "your_drive_token"
       }
     }
   }
@@ -74,6 +83,8 @@ RUST_LOG=debug cargo run
 # Build release
 cargo build --release
 ```
+
+The resulting executable can be found at `/path/to/mcp-webpublication-server/target/release/mcp-webpublication-server`
 
 ## Resources
 
