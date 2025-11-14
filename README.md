@@ -14,11 +14,13 @@ MCP server for Webpublication API - provides access to workspace management, gen
 
 ## Quick Start
 
-1. Copy `.env.example` to `.env` and add your credentials:
+1. Copy `.env.example` to `.env` and add your credentials (environment variables needed for testing with the MCP Inspector):
 ```env
 API_URL=your_api_url
+DRIVE_URL=your_drive_url
 CLIENT_ID=your_client_id
 WP_TOKEN=your_wp_token
+DRIVE_TOKEN=your_drive_token
 ```
 
 2. Build and test:
@@ -41,11 +43,18 @@ npx @modelcontextprotocol/inspector ./target/release/mcp-webpublication-server-p
 
 ### Using Claude
 
+Configure the MCP Web Publication server for either Claude Desktop or the Claude CLI.
+
 #### Claude Desktop
-Add the following to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
+
+Add the snippet below to your Claude Desktop config file:
+
+- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
 
 #### Claude CLI
-Add the following to `.mcp.json` at the root of the current project:
+
+At the root of your project, add the same snippet to `.mcp.json`.
 
 ```json
 {
@@ -66,13 +75,30 @@ Add the following to `.mcp.json` at the root of the current project:
 
 ## Tools
 
+### get_recent_resources
+- **Input**: None
+- **Output**: Returns the 20 most recent publications with their globalId and label (name)
+- **Usage**: Use this first to find a publication's globalId when not provided by the user
+
 ### get_resource
 - **Input**: `resource_gid` (number, e.g., 2473843)
-- **Output**: Resource/publication information with metadata
+- **Output**: Detailed resource/publication information with metadata
+- **Note**: Month values are zero-based. Add 1 to get the calendar month (e.g., 5 = June)
 
 ### get_publication_settings
 - **Input**: `resource_gid` (number, e.g., 2473843)
-- **Output**: Publication settings and configuration details
+- **Output**: Publication settings and configuration details including wishlistEnabled and coverImage.relUrl
+
+### toggle_wishlist
+- **Input**:
+  - `publication_gid` (number, e.g., 2473843)
+  - `wishlist_enabled` (boolean: true/false)
+- **Output**: Updated publication settings with new wishlist status
+- **Note**: Check current status via `get_publication_settings -> wishlistEnabled`
+
+### get_cover_image
+- **Input**: `rel_url` (string) - obtained from `get_publication_settings -> coverImage.relUrl`
+- **Output**: Cover image as base64-encoded image data
 
 ## Development
 
