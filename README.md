@@ -20,7 +20,6 @@ API_URL=your_api_url
 DRIVE_URL=your_drive_url
 CLIENT_ID=your_client_id
 WP_TOKEN=your_wp_token
-DRIVE_TOKEN=your_drive_token
 ```
 
 2. Build and test:
@@ -65,8 +64,7 @@ At the root of your project, add the same snippet to `.mcp.json`.
         "API_URL": "your_api_url",
         "DRIVE_URL": "your_drive_url",
         "CLIENT_ID": "your_client_id",
-        "WP_TOKEN": "your_wp_token",
-        "DRIVE_TOKEN": "your_drive_token"
+        "WP_TOKEN": "your_wp_token"
       }
     }
   }
