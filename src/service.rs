@@ -20,7 +20,6 @@ pub struct ApiConfig {
     pub drive_url: String,
     pub client_id: String,
     pub wp_token: String,
-    pub drive_token: String,
 }
 
 impl ApiConfig {
@@ -35,15 +34,12 @@ impl ApiConfig {
             .map_err(|_| anyhow::anyhow!("CLIENT_ID not found in environment"))?;
         let wp_token = std::env::var("WP_TOKEN")
             .map_err(|_| anyhow::anyhow!("WP_TOKEN not found in environment"))?;
-        let drive_token = std::env::var("DRIVE_TOKEN")
-            .map_err(|_| anyhow::anyhow!("DRIVE_TOKEN not found in environment"))?;
 
         Ok(Self {
             api_url,
             drive_url,
             client_id,
             wp_token,
-            drive_token,
         })
     }
 }
@@ -396,8 +392,16 @@ impl WebPublication {
             request.rel_url
         );
 
+        let refresh_response = self
+            .make_get_request(ApiEndpoint::LoginWs, "refresh", &[])
+            .await?;
+
+        let token = refresh_response.data["token"]
+            .as_str()
+            .ok_or_else(|| McpError::internal_error("Token not found in refresh response", None))?;
+
         let params = [
-            ("token", self.config.drive_token.as_str()),
+            ("token", token),
         ];
 
         let image_bytes = self
