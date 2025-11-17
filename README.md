@@ -12,6 +12,10 @@ MCP server for Webpublication API - provides access to workspace management, gen
 - Cookie-based authentication with WP_token
 - Support for multiple API endpoints (workspaceManagerWs, generationWs, customizationWs, etc.)
 
+## Prerequisites
+
+- **Rust**: [Install Rust](https://rust-lang.org/tools/install/)
+
 ## Quick Start
 
 1. Copy `.env.example` to `.env` and add your credentials (environment variables needed for testing with the MCP Inspector):
