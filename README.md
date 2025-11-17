@@ -26,23 +26,26 @@ CLIENT_ID=your_client_id
 WP_TOKEN=your_wp_token
 ```
 
-2. Build and test:
+2. Build release:
 ```bash
 cargo build --release
-npx @modelcontextprotocol/inspector ./target/release/mcp-webpublication-server-poc
 ```
 
-Open `http://127.0.0.1:6274` and test with publication GID like 2473843.
+The resulting binary executable can be found at `/path/to/mcp-webpublication-server/target/release/mcp-webpublication-server`
 
 ## Usage
 
 ### Testing with MCP Inspector
+Run at the project's root
 
 ```bash
 npx @modelcontextprotocol/inspector cargo run
 # or
-npx @modelcontextprotocol/inspector ./target/release/mcp-webpublication-server-poc
+npx @modelcontextprotocol/inspector ./target/release/mcp-webpublication-server
 ```
+
+Open `http://127.0.0.1:6274` and test tools.
+
 
 ### Using Claude
 
@@ -101,18 +104,6 @@ At the root of your project, add the same snippet to `.mcp.json`.
 ### get_cover_image
 - **Input**: `rel_url` (string) - obtained from `get_publication_settings -> coverImage.relUrl`
 - **Output**: Cover image as base64-encoded image data
-
-## Development
-
-```bash
-# Run with logging
-RUST_LOG=debug cargo run
-
-# Build release
-cargo build --release
-```
-
-The resulting executable can be found at `/path/to/mcp-webpublication-server/target/release/mcp-webpublication-server`
 
 ## Resources
 
