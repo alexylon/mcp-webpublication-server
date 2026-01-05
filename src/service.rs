@@ -387,42 +387,30 @@ impl WebPublication {
         &self,
         Parameters(request): Parameters<GetImageRequest>,
     ) -> Result<CallToolResult, McpError> {
-        tracing::info!(
-            "Getting image with relUrl: {}",
-            request.rel_url
-        );
+        tracing::info!("Getting image with relUrl: {}", request.rel_url);
 
         let refresh_response = self
             .make_get_request(ApiEndpoint::LoginWs, "refresh", &[])
             .await?;
-
         let token = refresh_response.data["token"]
             .as_str()
             .ok_or_else(|| McpError::internal_error("Token not found in refresh response", None))?;
 
-        let params = [
-            ("token", token),
-        ];
-
+        let params = [("token", token)];
         let image_bytes = self
             .make_get_file_request(&request.rel_url, &params)
             .await?;
 
-        // Encode image bytes as base64
-        let base64_image = general_purpose::STANDARD.encode(&image_bytes);
-
-        // Determine MIME type from file extension
-        let mime_type = if request.rel_url.ends_with(".png") {
-            "image/png"
-        } else if request.rel_url.ends_with(".jpg") || request.rel_url.ends_with(".jpeg") {
-            "image/jpeg"
-        } else if request.rel_url.ends_with(".gif") {
-            "image/gif"
-        } else if request.rel_url.ends_with(".webp") {
-            "image/webp"
-        } else {
-            "image/jpeg" // default to JPEG
+        // Decide MIME type by file extension (lowercased)
+        let mime_type = match request.rel_url.to_lowercase().as_str() {
+            p if p.ends_with(".png") => "image/png",
+            p if p.ends_with(".jpg") || p.ends_with(".jpeg") => "image/jpeg",
+            p if p.ends_with(".gif") => "image/gif",
+            p if p.ends_with(".webp") => "image/webp",
+            _ => "image/jpeg",
         };
+
+        let base64_image = general_purpose::STANDARD.encode(&image_bytes);
 
         Ok(CallToolResult::success(vec![Content::image(
             base64_image,
