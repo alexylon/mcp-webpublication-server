@@ -9,6 +9,8 @@ MCP server for Webpublication API - provides access to workspace management, gen
 - **get_publication_settings**: Get publication settings and configuration
 - **toggle_wishlist**: Enable/disable Wishlist
 - **get_cover_image**: Get the publication's cover image as bytes and encode it to base64 so the AI can see it
+- **list_folders**: List the sub-folders of a folder (root of the drive by default)
+- **create_folder**: Create a new folder in the drive (root by default)
 - Cookie-based authentication with WP_token
 - Support for multiple API endpoints (workspaceManagerWs, generationWs, customizationWs, etc.)
 
@@ -25,6 +27,9 @@ DRIVE_URL=your_drive_url
 CLIENT_ID=your_client_id
 WP_TOKEN=your_wp_token
 ```
+
+The binary loads `.env` from the current directory, then falls back to the project directory,
+so an MCP client can launch it from any working directory.
 
 2. Build release:
 ```bash
@@ -104,6 +109,18 @@ At the root of your project, add the same snippet to `.mcp.json`.
 ### get_cover_image
 - **Input**: `rel_url` (string) - obtained from `get_publication_settings -> coverImage.relUrl`
 - **Output**: Cover image as base64-encoded image data
+
+### list_folders
+- **Input**: `parent_gid` (number, optional) - globalId of the parent folder. Omit it for the root of the drive (resolved via `getCustomerContext -> driveHierarchy.rootGlobalId`)
+- **Output**: List of sub-folders with their globalId and label
+- **API**: `GET workspaceManagerWs/getDrives`
+
+### create_folder
+- **Input**:
+  - `name` (string) - label of the new folder
+  - `parent_gid` (number, optional) - globalId of the parent folder, omit it for the root of the drive
+- **Output**: The created folder (`globalId`, `parentId`) and the updated drive tree (`driveDto.drives`)
+- **API**: `POST workspaceManagerWs/createDrive` (multipart form: clientId, parentGId, driveLabel, image, imageFilename)
 
 ## Resources
 

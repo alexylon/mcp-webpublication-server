@@ -12,7 +12,10 @@ use rmcp::{
 };
 use std::sync::Arc;
 
-use crate::models::{ApiResponse, GetImageRequest, GetResourceRequest, ToggleWishlistRequest};
+use crate::models::{
+    ApiResponse, CreateFolderRequest, GetImageRequest, GetResourceRequest, ListFoldersRequest,
+    ToggleWishlistRequest,
+};
 
 #[derive(Debug, Clone)]
 pub struct ApiConfig {
@@ -24,7 +27,10 @@ pub struct ApiConfig {
 
 impl ApiConfig {
     pub fn from_env() -> Result<Self> {
+        // Load .env from the current directory, then fall back to the project directory
+        // (useful when the binary is launched by an MCP client from another cwd).
         dotenv::dotenv().ok();
+        dotenv::from_path(concat!(env!("CARGO_MANIFEST_DIR"), "/.env")).ok();
 
         let api_url = std::env::var("API_URL")
             .map_err(|_| anyhow::anyhow!("API_URL not found in environment"))?;
@@ -174,6 +180,65 @@ impl WebPublication {
         })?;
 
         Ok(data)
+    }
+
+    async fn make_post_form_request(
+        &self,
+        endpoint: ApiEndpoint,
+        method: &str,
+        fields: Vec<(&str, String)>,
+    ) -> Result<ApiResponse, McpError> {
+        let url = format!("{}{}/{}", self.config.api_url, endpoint.path(), method);
+
+        tracing::info!("Making POST (multipart) request to: {}", url);
+
+        let mut form = reqwest::multipart::Form::new();
+        for (key, value) in fields {
+            form = form.text(key.to_string(), value);
+        }
+
+        let response = self
+            .client
+            .post(&url)
+            .header("Cookie", format!("WP_token={}", self.config.wp_token))
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|e| McpError::internal_error(format!("Request failed: {}", e), None))?;
+
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+
+        if !status.is_success() {
+            return Err(McpError::internal_error(
+                format!("Request failed with status: {} - {}", status, text),
+                None,
+            ));
+        }
+
+        if text.trim().is_empty() {
+            return Ok(ApiResponse { data: serde_json::json!({ "status": status.as_u16() }) });
+        }
+
+        let data = serde_json::from_str::<ApiResponse>(&text).map_err(|e| {
+            McpError::internal_error(format!("Failed to parse response: {} - body: {}", e, text), None)
+        })?;
+
+        Ok(data)
+    }
+
+    /// Returns the globalId of the root drive of the configured client.
+    async fn root_drive_gid(&self) -> Result<i64, McpError> {
+        let params = [("clientId", self.config.client_id.as_str())];
+        let response = self
+            .make_get_request(ApiEndpoint::WorkspaceManagerWs, "getCustomerContext", &params)
+            .await?;
+
+        response.data["driveHierarchy"]["rootGlobalId"]
+            .as_i64()
+            .ok_or_else(|| {
+                McpError::internal_error("rootGlobalId not found in getCustomerContext response", None)
+            })
     }
 
     async fn make_get_file_request(
@@ -416,5 +481,75 @@ impl WebPublication {
             base64_image,
             mime_type.to_string(),
         )]))
+    }
+    #[tool(
+        description = "List the sub-folders (drives) of a folder in the Webpublication drive. \
+    Omit parent_gid to list the folders at the root of the drive. \
+    Each folder has a globalId and a label (name)."
+    )]
+    async fn list_folders(
+        &self,
+        Parameters(request): Parameters<ListFoldersRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let parent_gid = match request.parent_gid {
+            Some(gid) => gid,
+            None => self.root_drive_gid().await?,
+        };
+        tracing::info!("Listing folders under parent GID: {}", parent_gid);
+
+        let parent_gid_str = parent_gid.to_string();
+        let params = [
+            ("clientId", self.config.client_id.as_str()),
+            ("parentGId", parent_gid_str.as_str()),
+        ];
+
+        let response = self
+            .make_get_request(ApiEndpoint::WorkspaceManagerWs, "getDrives", &params)
+            .await?;
+
+        let formatted = serde_json::to_string_pretty(&response.data).map_err(|e| {
+            McpError::internal_error(format!("Failed to format response: {}", e), None)
+        })?;
+
+        Ok(CallToolResult::success(vec![Content::text(formatted)]))
+    }
+
+    #[tool(
+        description = "Create a new folder (drive) in the Webpublication drive. \
+    Provide the folder name and optionally the parent_gid (globalId of the parent folder, obtained from list_folders). \
+    Omit parent_gid to create the folder at the root of the drive. \
+    Returns the updated list of drives including the new folder."
+    )]
+    async fn create_folder(
+        &self,
+        Parameters(request): Parameters<CreateFolderRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let parent_gid = match request.parent_gid {
+            Some(gid) => gid,
+            None => self.root_drive_gid().await?,
+        };
+        tracing::info!(
+            "Creating folder '{}' under parent GID: {}",
+            request.name,
+            parent_gid
+        );
+
+        let fields = vec![
+            ("clientId", self.config.client_id.clone()),
+            ("parentGId", parent_gid.to_string()),
+            ("driveLabel", request.name.clone()),
+            ("image", String::new()),
+            ("imageFilename", String::new()),
+        ];
+
+        let response = self
+            .make_post_form_request(ApiEndpoint::WorkspaceManagerWs, "createDrive", fields)
+            .await?;
+
+        let formatted = serde_json::to_string_pretty(&response.data).map_err(|e| {
+            McpError::internal_error(format!("Failed to format response: {}", e), None)
+        })?;
+
+        Ok(CallToolResult::success(vec![Content::text(formatted)]))
     }
 }

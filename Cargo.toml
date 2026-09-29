@@ -12,6 +12,6 @@ schemars = { version = "1", features = ["derive"] }
 anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-reqwest = { version = "0.12", features = ["json", "cookies"] }
+reqwest = { version = "0.12", features = ["json", "cookies", "multipart"] }
 dotenv = "0.15"
 base64 = "0.22"
