@@ -187,3 +187,38 @@ pub struct TrashResourcesRequest {
     #[serde(default)]
     pub client_id: Option<i64>,
 }
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct GetTemplateTxtFileRequest {
+    /// globalId of the publication.
+    pub publication_gid: i64,
+    /// Path of the text file relative to the publication's templates folder (e.g. "common-ui.xml").
+    pub rel_path: String,
+    /// Client (customer) id. Omit it to use the CLIENT_ID configured in the environment.
+    #[serde(default)]
+    pub client_id: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct SaveTemplateTxtFileRequest {
+    /// globalId of the publication.
+    pub publication_gid: i64,
+    /// Path of the text file relative to the publication's templates folder (e.g. "common-ui.xml").
+    pub rel_path: String,
+    /// Full new content of the file.
+    pub content: String,
+    /// Client (customer) id. Omit it to use the CLIENT_ID configured in the environment.
+    #[serde(default)]
+    pub client_id: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct SetCustomAdminUrlRequest {
+    /// globalId of the publication (usually the playlist used by the configurator).
+    pub publication_gid: i64,
+    /// URL of the custom admin (configurator component), e.g. https://fr.zone-secure.net/{clientId}/{componentGId}/
+    pub url: String,
+    /// Client (customer) id. Omit it to use the CLIENT_ID configured in the environment.
+    #[serde(default)]
+    pub client_id: Option<i64>,
+}

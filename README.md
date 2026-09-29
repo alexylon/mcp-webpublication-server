@@ -18,6 +18,8 @@ MCP server for Webpublication API - provides access to workspace management, gen
 - **create_playlist** + **include_ext_pages**: Create an empty playlist and add pages of another publication into it
 - **upload_component**: Upload a zip as a COMPONENT served at `DRIVE_URL/{clientId}/{componentGId}/`
 - **upload_wishlist_products** / **upload_wishlist_images**: Attach the products Excel and the images zip to a wishlist publication
+- **get_template_txt_file** / **save_template_txt_file**: Read/overwrite a text file of a publication's templates folder (e.g. `common-ui.xml`)
+- **set_custom_admin_url**: Insert/replace `<custom_admin url="..."/>` in `common-ui.xml` > `<configs>` (configurator URL shown in the manager)
 - Every tool accepts an optional `client_id` to work on another customer than the configured `CLIENT_ID`
 - Cookie-based authentication with WP_token
 - Support for multiple API endpoints (workspaceManagerWs, generationWs, customizationWs, etc.)
@@ -177,6 +179,15 @@ At the root of your project, add the same snippet to `.mcp.json`.
 - **Output**: the parsed products (products) or the uploaded items (images)
 - **API**: `POST generationWs/uploadWishlistProducts` / `uploadWishlistImages` (multipart: file, filename, publicationGId, clientId)
 - **Note**: the products template is available at `DRIVE_URL/wishlist-products.xlsx`
+
+### get_template_txt_file / save_template_txt_file
+- **Input**: `publication_gid`, `rel_path` (relative to the publication's templates folder, e.g. `common-ui.xml`), plus `content` (full file) for save
+- **API**: `GET customizationWs/getTemplateTxtFile?clientId&globalId&relPath` / `POST customizationWs/saveTemplateTxtFile` (urlencoded: clientId, globalId, relPath, content; returns 204)
+
+### set_custom_admin_url
+- **Input**: `publication_gid`, `url` (typically `upload_component -> url`)
+- **Output**: `customAdminUrl` as re-read from `getPublicationSettings` (updated immediately)
+- **Note**: idempotent; replaces an existing `<custom_admin>` node or inserts one before `</configs>`
 
 ## Resources
 

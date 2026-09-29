@@ -16,9 +16,9 @@ use std::time::Duration;
 
 use crate::models::{
     ApiResponse, CreateFolderRequest, CreatePlaylistRequest, CreatePublicationFromFileRequest,
-    GetImageRequest, GetRecentResourcesRequest, GetResourceRequest, IncludeExtPagesRequest,
+    GetImageRequest, GetRecentResourcesRequest, GetResourceRequest, GetTemplateTxtFileRequest, IncludeExtPagesRequest,
     ListFoldersRequest, ListResourcesRequest, MoveResourcesRequest, PublicationRequest,
-    RenameResourceRequest, ToggleWishlistRequest, TrashResourcesRequest, UploadComponentRequest,
+    RenameResourceRequest, SaveTemplateTxtFileRequest, SetCustomAdminUrlRequest, ToggleWishlistRequest, TrashResourcesRequest, UploadComponentRequest,
     UploadWishlistFileRequest,
 };
 
@@ -411,6 +411,72 @@ impl WebPublication {
         Ok(bytes.to_vec())
     }
 
+
+    /// Reads a text file of the publication's templates folder (customizationWs/getTemplateTxtFile).
+    async fn get_template_txt(&self, client_id: &str, publication_gid: i64, rel_path: &str) -> Result<String, McpError> {
+        let url = format!("{}customizationWs/getTemplateTxtFile", self.config.api_url);
+        let gid = publication_gid.to_string();
+        let response = self
+            .client
+            .get(&url)
+            .header("Cookie", self.cookie_header())
+            .query(&[("clientId", client_id), ("globalId", gid.as_str()), ("relPath", rel_path)])
+            .send()
+            .await
+            .map_err(|e| McpError::internal_error(format!("Request failed: {}", e), None))?;
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        if !status.is_success() {
+            return Err(McpError::internal_error(
+                format!("getTemplateTxtFile failed with status: {} - {}", status, text),
+                None,
+            ));
+        }
+        Ok(text)
+    }
+
+    /// Overwrites a text file of the publication's templates folder (customizationWs/saveTemplateTxtFile).
+    async fn save_template_txt(&self, client_id: &str, publication_gid: i64, rel_path: &str, content: &str) -> Result<(), McpError> {
+        let fields = [
+            ("clientId", client_id.to_string()),
+            ("globalId", publication_gid.to_string()),
+            ("relPath", rel_path.to_string()),
+            ("content", content.to_string()),
+        ];
+        self.make_post_urlencoded_request(ApiEndpoint::CustomizationWs, "saveTemplateTxtFile", &fields)
+            .await?;
+        Ok(())
+    }
+
+    /// Inserts or replaces the `<custom_admin url="..."/>` node inside `<configs>` of a common-ui.xml document.
+    fn upsert_custom_admin(xml: &str, url: &str) -> Result<String, McpError> {
+        let escaped = url
+            .replace('&', "&amp;")
+            .replace('"', "&quot;")
+            .replace('<', "&lt;");
+        let node = format!("<custom_admin url=\"{}\"/>", escaped);
+
+        // Replace an existing node (self-closing or with a closing tag).
+        if let Some(start) = xml.find("<custom_admin") {
+            let rest = &xml[start..];
+            let end_rel = if let Some(close) = rest.find("</custom_admin>") {
+                close + "</custom_admin>".len()
+            } else if let Some(close) = rest.find("/>") {
+                close + 2
+            } else {
+                return Err(McpError::internal_error("Malformed <custom_admin> node in common-ui.xml", None));
+            };
+            return Ok(format!("{}{}{}", &xml[..start], node, &xml[start + end_rel..]));
+        }
+
+        // Otherwise insert it right before </configs>.
+        if let Some(pos) = xml.find("</configs>") {
+            return Ok(format!("{}    {}\n{}", &xml[..pos], node, &xml[pos..]));
+        }
+
+        Err(McpError::internal_error("No <configs> node found in common-ui.xml", None))
+    }
+
     fn text_result(data: &serde_json::Value) -> Result<CallToolResult, McpError> {
         Ok(CallToolResult::success(vec![Content::text(Self::format_json(data)?)]))
     }
@@ -762,6 +828,61 @@ impl WebPublication {
             .make_post_urlencoded_request(ApiEndpoint::WorkspaceManagerWs, "trashResources", &fields)
             .await?;
         Self::text_result(&response.data)
+    }
+
+
+    #[tool(
+        description = "Read a text file of a publication's templates folder (e.g. rel_path=\"common-ui.xml\", the viewer configuration). \
+    Returns the raw file content."
+    )]
+    async fn get_template_txt_file(
+        &self,
+        Parameters(request): Parameters<GetTemplateTxtFileRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let client_id = self.client_id(request.client_id);
+        let text = self.get_template_txt(&client_id, request.publication_gid, &request.rel_path).await?;
+        Ok(CallToolResult::success(vec![Content::text(text)]))
+    }
+
+    #[tool(
+        description = "Overwrite a text file of a publication's templates folder (e.g. rel_path=\"common-ui.xml\") with the given full content. \
+    Read it first with get_template_txt_file and send the whole modified file back."
+    )]
+    async fn save_template_txt_file(
+        &self,
+        Parameters(request): Parameters<SaveTemplateTxtFileRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let client_id = self.client_id(request.client_id);
+        self.save_template_txt(&client_id, request.publication_gid, &request.rel_path, &request.content).await?;
+        Self::text_result(&serde_json::json!({ "saved": request.rel_path, "publicationGId": request.publication_gid }))
+    }
+
+    #[tool(
+        description = "Set the custom admin (configurator) URL of a publication: reads its common-ui.xml, inserts or replaces \
+    <custom_admin url=\"...\"/> inside the <configs> node and saves the file. \
+    The url is typically the one returned by upload_component. Verify with get_publication_settings -> customAdminUrl."
+    )]
+    async fn set_custom_admin_url(
+        &self,
+        Parameters(request): Parameters<SetCustomAdminUrlRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let client_id = self.client_id(request.client_id);
+        tracing::info!("Setting custom_admin url of {} to {}", request.publication_gid, request.url);
+
+        let xml = self.get_template_txt(&client_id, request.publication_gid, "common-ui.xml").await?;
+        let updated = Self::upsert_custom_admin(&xml, &request.url)?;
+        self.save_template_txt(&client_id, request.publication_gid, "common-ui.xml", &updated).await?;
+
+        let gid = request.publication_gid.to_string();
+        let params = [("clientId", client_id.as_str()), ("publicationGId", gid.as_str())];
+        let settings = self
+            .make_get_request(ApiEndpoint::GenerationWs, "getPublicationSettings", &params)
+            .await?;
+
+        Self::text_result(&serde_json::json!({
+            "publicationGId": request.publication_gid,
+            "customAdminUrl": settings.data["customAdminUrl"],
+        }))
     }
 
     #[tool(
