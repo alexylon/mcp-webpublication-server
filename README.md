@@ -10,7 +10,15 @@ MCP server for Webpublication API - provides access to workspace management, gen
 - **toggle_wishlist**: Enable/disable Wishlist
 - **get_cover_image**: Get the publication's cover image as bytes and encode it to base64 so the AI can see it
 - **list_folders**: List the sub-folders of a folder (root of the drive by default)
+- **list_resources**: List the content of a folder (publications, playlists, components...) with pagination
 - **create_folder**: Create a new folder in the drive (root by default)
+- **rename_resource** / **move_resources** / **trash_resources**: Organise the drive
+- **create_publication_from_file**: Upload a local ePub/PDF as a new publication and wait until it is LIVE
+- **get_publication_progress**: Poll the generation status of a publication
+- **create_playlist** + **include_ext_pages**: Create an empty playlist and add pages of another publication into it
+- **upload_component**: Upload a zip as a COMPONENT served at `DRIVE_URL/{clientId}/{componentGId}/`
+- **upload_wishlist_products** / **upload_wishlist_images**: Attach the products Excel and the images zip to a wishlist publication
+- Every tool accepts an optional `client_id` to work on another customer than the configured `CLIENT_ID`
 - Cookie-based authentication with WP_token
 - Support for multiple API endpoints (workspaceManagerWs, generationWs, customizationWs, etc.)
 
@@ -121,6 +129,54 @@ At the root of your project, add the same snippet to `.mcp.json`.
   - `parent_gid` (number, optional) - globalId of the parent folder, omit it for the root of the drive
 - **Output**: The created folder (`globalId`, `parentId`) and the updated drive tree (`driveDto.drives`)
 - **API**: `POST workspaceManagerWs/createDrive` (multipart form: clientId, parentGId, driveLabel, image, imageFilename)
+
+### list_resources
+- **Input**: `folder_gid` (number, optional, root by default), `page_num` (0-based, default 0), `items_per_page` (default 50)
+- **Output**: `paginator.list` of resources (`globalId`, `label`, `type`: PUBLICATION, COMPONENT, DIRECTORY...) and `paginator.totalPage`
+- **API**: `GET workspaceManagerWs/getPaginatedResources`
+
+### rename_resource
+- **Input**: `resource_gid` (number), `label` (string)
+- **API**: `POST workspaceManagerWs/updateResourceName` (urlencoded: clientId, resourceGId, resourceLabel)
+
+### move_resources
+- **Input**: `resource_gids` (number[]), `new_parent_gid` (number)
+- **API**: `POST workspaceManagerWs/moveResources` (urlencoded: clientId, resourcesGIds (repeated), newParentGId)
+
+### trash_resources
+- **Input**: `resource_gids` (number[])
+- **Note**: Moves resources to the trash (reversible from the manager). No permanent delete is exposed.
+- **API**: `POST workspaceManagerWs/trashResources`
+
+### create_publication_from_file
+- **Input**: `file_path` (absolute local path: .epub, .pdf, .pptx...), `parent_gid` (folder), `label` (optional, renames after creation), `wait` (default true)
+- **Output**: `publicationGId`, the created resource, the final `progress` (when waited) and the rename response
+- **API**: `POST generationWs/createPublication` (multipart: file, filename, parentDriveGId, clientId, creationSource=DESKTOP, tmpId), then `GET generationWs/getPublicationProgress` every 2s until `status` is `LIVE` or `ERROR` (15 min timeout)
+
+### get_publication_progress
+- **Input**: `publication_gid` (number)
+- **Output**: `status` (UPLOADING, CREATED, PROCESSING, COMPLETED, LIVE, ERROR), `percentage`, `currentPage`, `totalpages`
+
+### create_playlist
+- **Input**: `folder_gid` (number), `label` (optional)
+- **Output**: `playlistGId` and the created EPUB_PLAYLIST resource
+- **API**: `POST generationWs/createNewPlaylist` (urlencoded: clientId, folderGId)
+
+### include_ext_pages
+- **Input**: `publication_gid` (target), `src_publication_gid` (source), `pages` (1-based numbers), `process_printables` (default true)
+- **Output**: the target's pages (`ComboPageXml` objects)
+- **API**: `POST generationWs/includeExtPages`
+
+### upload_component
+- **Input**: `file_path` (absolute local .zip), `folder_gid`, `label` (optional)
+- **Output**: `componentGId`, `url` (`DRIVE_URL/{clientId}/{componentGId}/`) and the created COMPONENT resource
+- **API**: `POST pageManagerWs/createPage` (multipart: file, filename, clientId, folderGId)
+
+### upload_wishlist_products / upload_wishlist_images
+- **Input**: `publication_gid`, `file_path` (.xlsx for products; .zip of images or a single image for images)
+- **Output**: the parsed products (products) or the uploaded items (images)
+- **API**: `POST generationWs/uploadWishlistProducts` / `uploadWishlistImages` (multipart: file, filename, publicationGId, clientId)
+- **Note**: the products template is available at `DRIVE_URL/wishlist-products.xlsx`
 
 ## Resources
 
