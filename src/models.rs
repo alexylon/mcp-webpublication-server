@@ -222,3 +222,18 @@ pub struct SetCustomAdminUrlRequest {
     #[serde(default)]
     pub client_id: Option<i64>,
 }
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct DuplicateResourceRequest {
+    /// globalId of the resource (publication, playlist...) to duplicate.
+    pub resource_gid: i64,
+    /// Optional label for the copy (default: "<label>-clone_N", chosen by the server).
+    #[serde(default)]
+    pub label: Option<String>,
+    /// Optional globalId of a folder to move the copy into (default: same folder as the original).
+    #[serde(default)]
+    pub new_parent_gid: Option<i64>,
+    /// Client (customer) id. Omit it to use the CLIENT_ID configured in the environment.
+    #[serde(default)]
+    pub client_id: Option<i64>,
+}

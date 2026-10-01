@@ -12,7 +12,7 @@ MCP server for Webpublication API - provides access to workspace management, gen
 - **list_folders**: List the sub-folders of a folder (root of the drive by default)
 - **list_resources**: List the content of a folder (publications, playlists, components...) with pagination
 - **create_folder**: Create a new folder in the drive (root by default)
-- **rename_resource** / **move_resources** / **trash_resources**: Organise the drive
+- **rename_resource** / **move_resources** / **trash_resources** / **duplicate_resource**: Organise the drive
 - **create_publication_from_file**: Upload a local ePub/PDF as a new publication and wait until it is LIVE
 - **get_publication_progress**: Poll the generation status of a publication
 - **create_playlist** + **include_ext_pages**: Create an empty playlist and add pages of another publication into it
@@ -144,6 +144,11 @@ At the root of your project, add the same snippet to `.mcp.json`.
 ### move_resources
 - **Input**: `resource_gids` (number[]), `new_parent_gid` (number)
 - **API**: `POST workspaceManagerWs/moveResources` (urlencoded: clientId, resourcesGIds (repeated), newParentGId)
+
+### duplicate_resource
+- **Input**: `resource_gid`, `label` (optional, renames the copy), `new_parent_gid` (optional, moves the copy)
+- **Output**: `copyGId` and the cloned resource. The copy keeps the original's settings (wishlist, `common-ui.xml`...)
+- **API**: `POST workspaceManagerWs/cloneResource?clientId&globalId` (no body), then `updateResourceName` / `moveResources`
 
 ### trash_resources
 - **Input**: `resource_gids` (number[])

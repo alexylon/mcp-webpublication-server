@@ -15,7 +15,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::models::{
-    ApiResponse, CreateFolderRequest, CreatePlaylistRequest, CreatePublicationFromFileRequest,
+    ApiResponse, CreateFolderRequest, DuplicateResourceRequest, CreatePlaylistRequest, CreatePublicationFromFileRequest,
     GetImageRequest, GetRecentResourcesRequest, GetResourceRequest, GetTemplateTxtFileRequest, IncludeExtPagesRequest,
     ListFoldersRequest, ListResourcesRequest, MoveResourcesRequest, PublicationRequest,
     RenameResourceRequest, SaveTemplateTxtFileRequest, SetCustomAdminUrlRequest, ToggleWishlistRequest, TrashResourcesRequest, UploadComponentRequest,
@@ -515,6 +515,7 @@ impl ServerHandler for WebPublication {
                 create_folder / rename_resource / move_resources organise it.\n\
                 - Catalogue configurator setup: create_publication_from_file uploads a local ePub/PDF as a new publication and waits for it to be LIVE; \
                 create_playlist creates an empty playlist; include_ext_pages adds pages of a source publication into it; \
+                duplicate_resource clones a publication/playlist (optionally renaming and moving the copy); set_custom_admin_url sets the configurator url in common-ui.xml; \
                 toggle_wishlist enables the wishlist; upload_component uploads a zip as a COMPONENT resource served at DRIVE_URL/{clientId}/{componentGlobalId}/; \
                 upload_wishlist_products / upload_wishlist_images attach the products Excel and the product images zip to a wishlist publication."
                     .to_string(),
@@ -883,6 +884,65 @@ impl WebPublication {
             "publicationGId": request.publication_gid,
             "customAdminUrl": settings.data["customAdminUrl"],
         }))
+    }
+
+
+    #[tool(
+        description = "Duplicate (clone) a resource such as a publication or a playlist. The copy keeps the settings of the original \
+    (wishlist, common-ui.xml / custom admin url...) and is created in the same folder. \
+    Provide label to rename the copy and new_parent_gid to move it into another folder. Returns the globalId of the copy."
+    )]
+    async fn duplicate_resource(
+        &self,
+        Parameters(request): Parameters<DuplicateResourceRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let client_id = self.client_id(request.client_id);
+        tracing::info!("Duplicating resource {}", request.resource_gid);
+
+        let url = format!("{}workspaceManagerWs/cloneResource", self.config.api_url);
+        let gid = request.resource_gid.to_string();
+        let response = self
+            .client
+            .post(&url)
+            .header("Cookie", self.cookie_header())
+            .header("Content-Length", "0")
+            .query(&[("clientId", client_id.as_str()), ("globalId", gid.as_str())])
+            .send()
+            .await
+            .map_err(|e| McpError::internal_error(format!("Request failed: {}", e), None))?;
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        let cloned = Self::parse_body(status, text)?;
+
+        let copy_gid = cloned.data["resource"]["globalId"].as_i64().ok_or_else(|| {
+            McpError::internal_error(
+                format!("globalId not found in cloneResource response: {}", cloned.data),
+                None,
+            )
+        })?;
+
+        let mut result = serde_json::json!({
+            "copyGId": copy_gid,
+            "resource": cloned.data["resource"],
+        });
+
+        if let Some(label) = &request.label {
+            let renamed = self.rename(&client_id, copy_gid, label).await?;
+            result["renamed"] = serde_json::json!({ "label": label, "response": renamed.data });
+        }
+
+        if let Some(parent) = request.new_parent_gid {
+            let fields = [
+                ("clientId", client_id.clone()),
+                ("resourcesGIds", copy_gid.to_string()),
+                ("newParentGId", parent.to_string()),
+            ];
+            self.make_post_urlencoded_request(ApiEndpoint::WorkspaceManagerWs, "moveResources", &fields)
+                .await?;
+            result["movedTo"] = serde_json::json!(parent);
+        }
+
+        Self::text_result(&result)
     }
 
     #[tool(
