@@ -38,8 +38,8 @@ CLIENT_ID=your_client_id
 WP_TOKEN=your_wp_token
 ```
 
-The binary loads `.env` from the current directory, then falls back to the project directory,
-so an MCP client can launch it from any working directory.
+The binary loads `.env` from the project directory first, then falls back to the current directory,
+so an MCP client can launch it from any working directory without picking up another project's `.env`.
 
 2. Build release:
 ```bash

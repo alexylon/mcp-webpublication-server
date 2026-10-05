@@ -26,6 +26,10 @@ use crate::models::{
 const PROGRESS_POLL_INTERVAL: Duration = Duration::from_secs(2);
 /// Maximum time to wait for a publication generation before giving up.
 const PROGRESS_TIMEOUT: Duration = Duration::from_secs(15 * 60);
+/// Maximum time to establish a connection to the API.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+/// Maximum total time of a GET request (uploads are not bounded: files can be large).
+const GET_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone)]
 pub struct ApiConfig {
@@ -37,10 +41,11 @@ pub struct ApiConfig {
 
 impl ApiConfig {
     pub fn from_env() -> Result<Self> {
-        // Load .env from the current directory, then fall back to the project directory
-        // (useful when the binary is launched by an MCP client from another cwd).
-        dotenv::dotenv().ok();
+        // Load .env from the project directory first, then fall back to the current directory.
+        // dotenv never overrides already-set variables, so the project file must win over the
+        // .env of whatever cwd an MCP client launches the binary from.
         dotenv::from_path(concat!(env!("CARGO_MANIFEST_DIR"), "/.env")).ok();
+        dotenv::dotenv().ok();
 
         let api_url = std::env::var("API_URL")
             .map_err(|_| anyhow::anyhow!("API_URL not found in environment"))?;
@@ -111,7 +116,10 @@ pub struct WebPublication {
 impl WebPublication {
     pub fn new() -> Result<Self> {
         let config = ApiConfig::from_env()?;
-        let client = Client::builder().cookie_store(true).build()?;
+        let client = Client::builder()
+            .cookie_store(true)
+            .connect_timeout(CONNECT_TIMEOUT)
+            .build()?;
 
         Ok(Self {
             client: Arc::new(client),
@@ -173,6 +181,7 @@ impl WebPublication {
         let mut request = self
             .client
             .get(&url)
+            .timeout(GET_TIMEOUT)
             .header("Content-Type", "application/json")
             .header("Cookie", self.cookie_header());
 
@@ -324,6 +333,27 @@ impl WebPublication {
             .await
     }
 
+    /// Renames a freshly created resource when a label is given. A failure is recorded in
+    /// `result["renameError"]` instead of being returned, so the caller still gets the globalId
+    /// of the resource that already exists.
+    async fn apply_label(
+        &self,
+        client_id: &str,
+        resource_gid: i64,
+        label: Option<&String>,
+        result: &mut serde_json::Value,
+    ) {
+        let Some(label) = label else { return };
+        match self.rename(client_id, resource_gid, label).await {
+            Ok(renamed) => {
+                result["renamed"] = serde_json::json!({ "label": label, "response": renamed.data });
+            }
+            Err(e) => {
+                result["renameError"] = serde_json::json!(e.message);
+            }
+        }
+    }
+
     /// Extracts the globalId of a created resource from an API response.
     fn extract_global_id(data: &serde_json::Value) -> Option<i64> {
         data["globalId"]
@@ -419,6 +449,7 @@ impl WebPublication {
         let response = self
             .client
             .get(&url)
+            .timeout(GET_TIMEOUT)
             .header("Cookie", self.cookie_header())
             .query(&[("clientId", client_id), ("globalId", gid.as_str()), ("relPath", rel_path)])
             .send()
@@ -448,6 +479,32 @@ impl WebPublication {
         Ok(())
     }
 
+    /// Returns the position of the first real `<custom_admin>` opening tag: longer tag names
+    /// (`<custom_admin_foo`) and nodes inside an XML comment are ignored.
+    fn find_custom_admin(xml: &str) -> Option<usize> {
+        const TAG: &str = "<custom_admin";
+        let mut from = 0;
+        while let Some(rel) = xml[from..].find(TAG) {
+            let start = from + rel;
+            let after = start + TAG.len();
+            let is_tag = xml[after..]
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_whitespace() || c == '/' || c == '>');
+            let before = &xml[..start];
+            let in_comment = match (before.rfind("<!--"), before.rfind("-->")) {
+                (Some(open), Some(close)) => open > close,
+                (Some(_), None) => true,
+                _ => false,
+            };
+            if is_tag && !in_comment {
+                return Some(start);
+            }
+            from = after;
+        }
+        None
+    }
+
     /// Inserts or replaces the `<custom_admin url="..."/>` node inside `<configs>` of a common-ui.xml document.
     fn upsert_custom_admin(xml: &str, url: &str) -> Result<String, McpError> {
         let escaped = url
@@ -457,14 +514,15 @@ impl WebPublication {
         let node = format!("<custom_admin url=\"{}\"/>", escaped);
 
         // Replace an existing node (self-closing or with a closing tag).
-        if let Some(start) = xml.find("<custom_admin") {
+        if let Some(start) = Self::find_custom_admin(xml) {
             let rest = &xml[start..];
-            let end_rel = if let Some(close) = rest.find("</custom_admin>") {
-                close + "</custom_admin>".len()
-            } else if let Some(close) = rest.find("/>") {
-                close + 2
+            let malformed = || McpError::internal_error("Malformed <custom_admin> node in common-ui.xml", None);
+            let tag_end = rest.find('>').ok_or_else(malformed)?;
+            let end_rel = if rest[..tag_end].ends_with('/') {
+                tag_end + 1
             } else {
-                return Err(McpError::internal_error("Malformed <custom_admin> node in common-ui.xml", None));
+                let close = rest.find("</custom_admin>").ok_or_else(malformed)?;
+                close + "</custom_admin>".len()
             };
             return Ok(format!("{}{}{}", &xml[..start], node, &xml[start + end_rel..]));
         }
@@ -926,10 +984,7 @@ impl WebPublication {
             "resource": cloned.data["resource"],
         });
 
-        if let Some(label) = &request.label {
-            let renamed = self.rename(&client_id, copy_gid, label).await?;
-            result["renamed"] = serde_json::json!({ "label": label, "response": renamed.data });
-        }
+        self.apply_label(&client_id, copy_gid, request.label.as_ref(), &mut result).await;
 
         if let Some(parent) = request.new_parent_gid {
             let fields = [
@@ -937,9 +992,13 @@ impl WebPublication {
                 ("resourcesGIds", copy_gid.to_string()),
                 ("newParentGId", parent.to_string()),
             ];
-            self.make_post_urlencoded_request(ApiEndpoint::WorkspaceManagerWs, "moveResources", &fields)
-                .await?;
-            result["movedTo"] = serde_json::json!(parent);
+            match self
+                .make_post_urlencoded_request(ApiEndpoint::WorkspaceManagerWs, "moveResources", &fields)
+                .await
+            {
+                Ok(_) => result["movedTo"] = serde_json::json!(parent),
+                Err(e) => result["moveError"] = serde_json::json!(e.message),
+            }
         }
 
         Self::text_result(&result)
@@ -951,7 +1010,9 @@ impl WebPublication {
     By default the tool waits until the publication is LIVE (polling every 2s, up to 15 minutes) and returns the final progress; \
     set wait=false to return right after the upload and poll with get_publication_progress yourself. \
     Provide label to rename the publication after creation (default: the file name). \
-    Returns the created resource (its globalId is the publication gid) and, when waited, the final progress."
+    Returns the created resource (its globalId is the publication gid) and, when waited, the final progress. \
+    If the wait fails (generation ERROR, timeout, network error), the publication still exists: the result carries waitError \
+    instead of progress; do not re-upload, poll get_publication_progress with the returned publicationGId."
     )]
     async fn create_publication_from_file(
         &self,
@@ -993,14 +1054,16 @@ impl WebPublication {
             "resource": created.data,
         });
 
-        if request.wait.unwrap_or(true) {
-            let progress = self.wait_for_publication(&client_id, publication_gid).await?;
-            result["progress"] = progress;
-        }
+        // Rename before waiting, so the label is applied even if the wait fails or is cancelled.
+        self.apply_label(&client_id, publication_gid, request.label.as_ref(), &mut result).await;
 
-        if let Some(label) = &request.label {
-            let renamed = self.rename(&client_id, publication_gid, label).await?;
-            result["renamed"] = serde_json::json!({ "label": label, "response": renamed.data });
+        // A failed wait is recorded in `result["waitError"]` instead of being returned, so the
+        // caller still gets the globalId of the publication that already exists.
+        if request.wait.unwrap_or(true) {
+            match self.wait_for_publication(&client_id, publication_gid).await {
+                Ok(progress) => result["progress"] = progress,
+                Err(e) => result["waitError"] = serde_json::json!(e.message),
+            }
         }
 
         Self::text_result(&result)
@@ -1051,10 +1114,7 @@ impl WebPublication {
             "resource": created.data,
         });
 
-        if let Some(label) = &request.label {
-            let renamed = self.rename(&client_id, playlist_gid, label).await?;
-            result["renamed"] = serde_json::json!({ "label": label, "response": renamed.data });
-        }
+        self.apply_label(&client_id, playlist_gid, request.label.as_ref(), &mut result).await;
 
         Self::text_result(&result)
     }
@@ -1119,17 +1179,19 @@ impl WebPublication {
             .make_post_form_request(ApiEndpoint::PageManagerWs, "createPage", fields, Some(file))
             .await?;
 
-        let component_gid = Self::extract_global_id(&created.data);
+        let component_gid = Self::extract_global_id(&created.data).ok_or_else(|| {
+            McpError::internal_error(
+                format!("globalId not found in createPage response: {}", created.data),
+                None,
+            )
+        })?;
         let mut result = serde_json::json!({
             "componentGId": component_gid,
-            "url": component_gid.map(|gid| format!("{}{}/{}/", self.config.drive_url, client_id, gid)),
+            "url": format!("{}{}/{}/", self.config.drive_url, client_id, component_gid),
             "resource": created.data,
         });
 
-        if let (Some(label), Some(gid)) = (&request.label, component_gid) {
-            let renamed = self.rename(&client_id, gid, label).await?;
-            result["renamed"] = serde_json::json!({ "label": label, "response": renamed.data });
-        }
+        self.apply_label(&client_id, component_gid, request.label.as_ref(), &mut result).await;
 
         Self::text_result(&result)
     }
