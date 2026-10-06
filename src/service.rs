@@ -449,10 +449,13 @@ impl WebPublication {
             request = request.query(&[(key, value)]);
         }
 
-        let response = request
-            .send()
-            .await
-            .map_err(|e| McpError::internal_error(format!("Request failed: {}", e), None))?;
+        // The query carries the drive token, and reqwest errors print the full URL: strip it.
+        let response = request.send().await.map_err(|e| {
+            McpError::internal_error(
+                format!("Request to {} failed: {}", url, e.without_url()),
+                None,
+            )
+        })?;
 
         if !response.status().is_success() {
             return Err(McpError::internal_error(
@@ -462,7 +465,10 @@ impl WebPublication {
         }
 
         let bytes = response.bytes().await.map_err(|e| {
-            McpError::internal_error(format!("Failed to read response bytes: {}", e), None)
+            McpError::internal_error(
+                format!("Failed to read response bytes: {}", e.without_url()),
+                None,
+            )
         })?;
 
         Ok(bytes.to_vec())
