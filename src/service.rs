@@ -15,10 +15,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::models::{
-    ApiResponse, CreateFolderRequest, DuplicateResourceRequest, CreatePlaylistRequest, CreatePublicationFromFileRequest,
-    GetImageRequest, GetRecentResourcesRequest, GetResourceRequest, GetTemplateTxtFileRequest, IncludeExtPagesRequest,
-    ListFoldersRequest, ListResourcesRequest, MoveResourcesRequest, PublicationRequest,
-    RenameResourceRequest, SaveTemplateTxtFileRequest, SetCustomAdminUrlRequest, ToggleWishlistRequest, TrashResourcesRequest, UploadComponentRequest,
+    ApiResponse, CreateFolderRequest, CreatePlaylistRequest, CreatePublicationFromFileRequest,
+    DuplicateResourceRequest, GetImageRequest, GetRecentResourcesRequest, GetResourceRequest,
+    GetTemplateTxtFileRequest, IncludeExtPagesRequest, ListFoldersRequest, ListResourcesRequest,
+    MoveResourcesRequest, PublicationRequest, RenameResourceRequest, SaveTemplateTxtFileRequest,
+    SetCustomAdminUrlRequest, ToggleWishlistRequest, TrashResourcesRequest, UploadComponentRequest,
     UploadWishlistFileRequest,
 };
 
@@ -65,6 +66,8 @@ impl ApiConfig {
     }
 }
 
+/// The `Ws` suffix mirrors the upstream service names (`workspaceManagerWs`...).
+#[allow(clippy::enum_variant_names)]
 #[derive(Debug, Clone, Copy)]
 pub enum ApiEndpoint {
     LoginWs,
@@ -303,34 +306,48 @@ impl WebPublication {
             .file_name()
             .and_then(|n| n.to_str())
             .map(|n| n.to_string())
-            .ok_or_else(|| {
-                McpError::invalid_params(format!("Invalid file path: '{}'", path), None)
-            })
+            .ok_or_else(|| McpError::invalid_params(format!("Invalid file path: '{}'", path), None))
     }
 
     /// Returns the globalId of the root drive of a client.
     async fn root_drive_gid(&self, client_id: &str) -> Result<i64, McpError> {
         let params = [("clientId", client_id)];
         let response = self
-            .make_get_request(ApiEndpoint::WorkspaceManagerWs, "getCustomerContext", &params)
+            .make_get_request(
+                ApiEndpoint::WorkspaceManagerWs,
+                "getCustomerContext",
+                &params,
+            )
             .await?;
 
         response.data["driveHierarchy"]["rootGlobalId"]
             .as_i64()
             .ok_or_else(|| {
-                McpError::internal_error("rootGlobalId not found in getCustomerContext response", None)
+                McpError::internal_error(
+                    "rootGlobalId not found in getCustomerContext response",
+                    None,
+                )
             })
     }
 
     /// Renames a resource (publication, folder, component...).
-    async fn rename(&self, client_id: &str, resource_gid: i64, label: &str) -> Result<ApiResponse, McpError> {
+    async fn rename(
+        &self,
+        client_id: &str,
+        resource_gid: i64,
+        label: &str,
+    ) -> Result<ApiResponse, McpError> {
         let fields = [
             ("clientId", client_id.to_string()),
             ("resourceGId", resource_gid.to_string()),
             ("resourceLabel", label.to_string()),
         ];
-        self.make_post_urlencoded_request(ApiEndpoint::WorkspaceManagerWs, "updateResourceName", &fields)
-            .await
+        self.make_post_urlencoded_request(
+            ApiEndpoint::WorkspaceManagerWs,
+            "updateResourceName",
+            &fields,
+        )
+        .await
     }
 
     /// Renames a freshly created resource when a label is given. A failure is recorded in
@@ -361,7 +378,11 @@ impl WebPublication {
             .or_else(|| data["resourceGId"].as_i64())
     }
 
-    async fn publication_progress(&self, client_id: &str, publication_gid: i64) -> Result<ApiResponse, McpError> {
+    async fn publication_progress(
+        &self,
+        client_id: &str,
+        publication_gid: i64,
+    ) -> Result<ApiResponse, McpError> {
         let gid = publication_gid.to_string();
         let params = [("clientId", client_id), ("publicationGId", gid.as_str())];
         self.make_get_request(ApiEndpoint::GenerationWs, "getPublicationProgress", &params)
@@ -369,10 +390,16 @@ impl WebPublication {
     }
 
     /// Polls getPublicationProgress until the publication is LIVE or in ERROR.
-    async fn wait_for_publication(&self, client_id: &str, publication_gid: i64) -> Result<serde_json::Value, McpError> {
+    async fn wait_for_publication(
+        &self,
+        client_id: &str,
+        publication_gid: i64,
+    ) -> Result<serde_json::Value, McpError> {
         let start = std::time::Instant::now();
         loop {
-            let progress = self.publication_progress(client_id, publication_gid).await?;
+            let progress = self
+                .publication_progress(client_id, publication_gid)
+                .await?;
             let status = progress.data["status"].as_str().unwrap_or("").to_string();
             tracing::info!(
                 "Publication {} progress: {} ({}%)",
@@ -441,9 +468,13 @@ impl WebPublication {
         Ok(bytes.to_vec())
     }
 
-
     /// Reads a text file of the publication's templates folder (customizationWs/getTemplateTxtFile).
-    async fn get_template_txt(&self, client_id: &str, publication_gid: i64, rel_path: &str) -> Result<String, McpError> {
+    async fn get_template_txt(
+        &self,
+        client_id: &str,
+        publication_gid: i64,
+        rel_path: &str,
+    ) -> Result<String, McpError> {
         let url = format!("{}customizationWs/getTemplateTxtFile", self.config.api_url);
         let gid = publication_gid.to_string();
         let response = self
@@ -451,7 +482,11 @@ impl WebPublication {
             .get(&url)
             .timeout(GET_TIMEOUT)
             .header("Cookie", self.cookie_header())
-            .query(&[("clientId", client_id), ("globalId", gid.as_str()), ("relPath", rel_path)])
+            .query(&[
+                ("clientId", client_id),
+                ("globalId", gid.as_str()),
+                ("relPath", rel_path),
+            ])
             .send()
             .await
             .map_err(|e| McpError::internal_error(format!("Request failed: {}", e), None))?;
@@ -459,7 +494,10 @@ impl WebPublication {
         let text = response.text().await.unwrap_or_default();
         if !status.is_success() {
             return Err(McpError::internal_error(
-                format!("getTemplateTxtFile failed with status: {} - {}", status, text),
+                format!(
+                    "getTemplateTxtFile failed with status: {} - {}",
+                    status, text
+                ),
                 None,
             ));
         }
@@ -467,15 +505,25 @@ impl WebPublication {
     }
 
     /// Overwrites a text file of the publication's templates folder (customizationWs/saveTemplateTxtFile).
-    async fn save_template_txt(&self, client_id: &str, publication_gid: i64, rel_path: &str, content: &str) -> Result<(), McpError> {
+    async fn save_template_txt(
+        &self,
+        client_id: &str,
+        publication_gid: i64,
+        rel_path: &str,
+        content: &str,
+    ) -> Result<(), McpError> {
         let fields = [
             ("clientId", client_id.to_string()),
             ("globalId", publication_gid.to_string()),
             ("relPath", rel_path.to_string()),
             ("content", content.to_string()),
         ];
-        self.make_post_urlencoded_request(ApiEndpoint::CustomizationWs, "saveTemplateTxtFile", &fields)
-            .await?;
+        self.make_post_urlencoded_request(
+            ApiEndpoint::CustomizationWs,
+            "saveTemplateTxtFile",
+            &fields,
+        )
+        .await?;
         Ok(())
     }
 
@@ -516,7 +564,8 @@ impl WebPublication {
         // Replace an existing node (self-closing or with a closing tag).
         if let Some(start) = Self::find_custom_admin(xml) {
             let rest = &xml[start..];
-            let malformed = || McpError::internal_error("Malformed <custom_admin> node in common-ui.xml", None);
+            let malformed =
+                || McpError::internal_error("Malformed <custom_admin> node in common-ui.xml", None);
             let tag_end = rest.find('>').ok_or_else(malformed)?;
             let end_rel = if rest[..tag_end].ends_with('/') {
                 tag_end + 1
@@ -524,7 +573,12 @@ impl WebPublication {
                 let close = rest.find("</custom_admin>").ok_or_else(malformed)?;
                 close + "</custom_admin>".len()
             };
-            return Ok(format!("{}{}{}", &xml[..start], node, &xml[start + end_rel..]));
+            return Ok(format!(
+                "{}{}{}",
+                &xml[..start],
+                node,
+                &xml[start + end_rel..]
+            ));
         }
 
         // Otherwise insert it right before </configs>.
@@ -532,11 +586,16 @@ impl WebPublication {
             return Ok(format!("{}    {}\n{}", &xml[..pos], node, &xml[pos..]));
         }
 
-        Err(McpError::internal_error("No <configs> node found in common-ui.xml", None))
+        Err(McpError::internal_error(
+            "No <configs> node found in common-ui.xml",
+            None,
+        ))
     }
 
     fn text_result(data: &serde_json::Value) -> Result<CallToolResult, McpError> {
-        Ok(CallToolResult::success(vec![Content::text(Self::format_json(data)?)]))
+        Ok(CallToolResult::success(vec![Content::text(
+            Self::format_json(data)?,
+        )]))
     }
 }
 
@@ -603,7 +662,11 @@ impl WebPublication {
         ];
 
         let response = self
-            .make_get_request(ApiEndpoint::WorkspaceManagerWs, "getRecentResources", &params)
+            .make_get_request(
+                ApiEndpoint::WorkspaceManagerWs,
+                "getRecentResources",
+                &params,
+            )
             .await?;
 
         Self::text_result(&response.data)
@@ -644,7 +707,10 @@ impl WebPublication {
         &self,
         Parameters(request): Parameters<GetResourceRequest>,
     ) -> Result<CallToolResult, McpError> {
-        tracing::info!("Getting publication settings with GID: {}", request.resource_gid);
+        tracing::info!(
+            "Getting publication settings with GID: {}",
+            request.resource_gid
+        );
 
         let client_id = self.client_id(request.client_id);
         let resource_gid_str = request.resource_gid.to_string();
@@ -660,13 +726,11 @@ impl WebPublication {
         Self::text_result(&response.data)
     }
 
-    #[tool(
-        description = "Toggle wishlist status for a publication. \
+    #[tool(description = "Toggle wishlist status for a publication. \
     Provide the globalId from get_recent_resources, if not supplied by the user, \
     as the publication_gid parameter (e.g., 2473843), and specify whether to enable or disable \
     the wishlist using wishlist_enabled (true/false). The current wishlist status can be obtained \
-    from get_publication_settings -> wishlistEnabled."
-    )]
+    from get_publication_settings -> wishlistEnabled.")]
     async fn toggle_wishlist(
         &self,
         Parameters(request): Parameters<ToggleWishlistRequest>,
@@ -687,16 +751,19 @@ impl WebPublication {
         });
 
         let response = self
-            .make_put_request(ApiEndpoint::GenerationWs, "updatePublicationSettings", &params, body)
+            .make_put_request(
+                ApiEndpoint::GenerationWs,
+                "updatePublicationSettings",
+                &params,
+                body,
+            )
             .await?;
 
         Self::text_result(&response.data)
     }
 
-    #[tool(
-        description = "Get the cover image of the publication. \
-    Provide the relUrl as a parameter from get_publication_settings in the response field coverImage.relUrl"
-    )]
+    #[tool(description = "Get the cover image of the publication. \
+    Provide the relUrl as a parameter from get_publication_settings in the response field coverImage.relUrl")]
     async fn get_cover_image(
         &self,
         Parameters(request): Parameters<GetImageRequest>,
@@ -790,7 +857,11 @@ impl WebPublication {
         ];
 
         let response = self
-            .make_get_request(ApiEndpoint::WorkspaceManagerWs, "getPaginatedResources", &params)
+            .make_get_request(
+                ApiEndpoint::WorkspaceManagerWs,
+                "getPaginatedResources",
+                &params,
+            )
             .await?;
 
         Self::text_result(&response.data)
@@ -811,7 +882,11 @@ impl WebPublication {
             Some(gid) => gid,
             None => self.root_drive_gid(&client_id).await?,
         };
-        tracing::info!("Creating folder '{}' under parent GID: {}", request.name, parent_gid);
+        tracing::info!(
+            "Creating folder '{}' under parent GID: {}",
+            request.name,
+            parent_gid
+        );
 
         let fields = vec![
             ("clientId", client_id.clone()),
@@ -837,8 +912,14 @@ impl WebPublication {
         Parameters(request): Parameters<RenameResourceRequest>,
     ) -> Result<CallToolResult, McpError> {
         let client_id = self.client_id(request.client_id);
-        tracing::info!("Renaming resource {} to '{}'", request.resource_gid, request.label);
-        let response = self.rename(&client_id, request.resource_gid, &request.label).await?;
+        tracing::info!(
+            "Renaming resource {} to '{}'",
+            request.resource_gid,
+            request.label
+        );
+        let response = self
+            .rename(&client_id, request.resource_gid, &request.label)
+            .await?;
         Self::text_result(&response.data)
     }
 
@@ -851,7 +932,11 @@ impl WebPublication {
         Parameters(request): Parameters<MoveResourcesRequest>,
     ) -> Result<CallToolResult, McpError> {
         let client_id = self.client_id(request.client_id);
-        tracing::info!("Moving resources {:?} to folder {}", request.resource_gids, request.new_parent_gid);
+        tracing::info!(
+            "Moving resources {:?} to folder {}",
+            request.resource_gids,
+            request.new_parent_gid
+        );
 
         let mut fields: Vec<(&str, String)> = vec![("clientId", client_id.clone())];
         for gid in &request.resource_gids {
@@ -864,7 +949,6 @@ impl WebPublication {
             .await?;
         Self::text_result(&response.data)
     }
-
 
     #[tool(
         description = "Move one or several resources (publications, folders, components...) to the trash. \
@@ -884,11 +968,14 @@ impl WebPublication {
         }
 
         let response = self
-            .make_post_urlencoded_request(ApiEndpoint::WorkspaceManagerWs, "trashResources", &fields)
+            .make_post_urlencoded_request(
+                ApiEndpoint::WorkspaceManagerWs,
+                "trashResources",
+                &fields,
+            )
             .await?;
         Self::text_result(&response.data)
     }
-
 
     #[tool(
         description = "Read a text file of a publication's templates folder (e.g. rel_path=\"common-ui.xml\", the viewer configuration). \
@@ -899,7 +986,9 @@ impl WebPublication {
         Parameters(request): Parameters<GetTemplateTxtFileRequest>,
     ) -> Result<CallToolResult, McpError> {
         let client_id = self.client_id(request.client_id);
-        let text = self.get_template_txt(&client_id, request.publication_gid, &request.rel_path).await?;
+        let text = self
+            .get_template_txt(&client_id, request.publication_gid, &request.rel_path)
+            .await?;
         Ok(CallToolResult::success(vec![Content::text(text)]))
     }
 
@@ -912,8 +1001,16 @@ impl WebPublication {
         Parameters(request): Parameters<SaveTemplateTxtFileRequest>,
     ) -> Result<CallToolResult, McpError> {
         let client_id = self.client_id(request.client_id);
-        self.save_template_txt(&client_id, request.publication_gid, &request.rel_path, &request.content).await?;
-        Self::text_result(&serde_json::json!({ "saved": request.rel_path, "publicationGId": request.publication_gid }))
+        self.save_template_txt(
+            &client_id,
+            request.publication_gid,
+            &request.rel_path,
+            &request.content,
+        )
+        .await?;
+        Self::text_result(
+            &serde_json::json!({ "saved": request.rel_path, "publicationGId": request.publication_gid }),
+        )
     }
 
     #[tool(
@@ -926,14 +1023,29 @@ impl WebPublication {
         Parameters(request): Parameters<SetCustomAdminUrlRequest>,
     ) -> Result<CallToolResult, McpError> {
         let client_id = self.client_id(request.client_id);
-        tracing::info!("Setting custom_admin url of {} to {}", request.publication_gid, request.url);
+        tracing::info!(
+            "Setting custom_admin url of {} to {}",
+            request.publication_gid,
+            request.url
+        );
 
-        let xml = self.get_template_txt(&client_id, request.publication_gid, "common-ui.xml").await?;
+        let xml = self
+            .get_template_txt(&client_id, request.publication_gid, "common-ui.xml")
+            .await?;
         let updated = Self::upsert_custom_admin(&xml, &request.url)?;
-        self.save_template_txt(&client_id, request.publication_gid, "common-ui.xml", &updated).await?;
+        self.save_template_txt(
+            &client_id,
+            request.publication_gid,
+            "common-ui.xml",
+            &updated,
+        )
+        .await?;
 
         let gid = request.publication_gid.to_string();
-        let params = [("clientId", client_id.as_str()), ("publicationGId", gid.as_str())];
+        let params = [
+            ("clientId", client_id.as_str()),
+            ("publicationGId", gid.as_str()),
+        ];
         let settings = self
             .make_get_request(ApiEndpoint::GenerationWs, "getPublicationSettings", &params)
             .await?;
@@ -943,7 +1055,6 @@ impl WebPublication {
             "customAdminUrl": settings.data["customAdminUrl"],
         }))
     }
-
 
     #[tool(
         description = "Duplicate (clone) a resource such as a publication or a playlist. The copy keeps the settings of the original \
@@ -972,19 +1083,25 @@ impl WebPublication {
         let text = response.text().await.unwrap_or_default();
         let cloned = Self::parse_body(status, text)?;
 
-        let copy_gid = cloned.data["resource"]["globalId"].as_i64().ok_or_else(|| {
-            McpError::internal_error(
-                format!("globalId not found in cloneResource response: {}", cloned.data),
-                None,
-            )
-        })?;
+        let copy_gid = cloned.data["resource"]["globalId"]
+            .as_i64()
+            .ok_or_else(|| {
+                McpError::internal_error(
+                    format!(
+                        "globalId not found in cloneResource response: {}",
+                        cloned.data
+                    ),
+                    None,
+                )
+            })?;
 
         let mut result = serde_json::json!({
             "copyGId": copy_gid,
             "resource": cloned.data["resource"],
         });
 
-        self.apply_label(&client_id, copy_gid, request.label.as_ref(), &mut result).await;
+        self.apply_label(&client_id, copy_gid, request.label.as_ref(), &mut result)
+            .await;
 
         if let Some(parent) = request.new_parent_gid {
             let fields = [
@@ -993,7 +1110,11 @@ impl WebPublication {
                 ("newParentGId", parent.to_string()),
             ];
             match self
-                .make_post_urlencoded_request(ApiEndpoint::WorkspaceManagerWs, "moveResources", &fields)
+                .make_post_urlencoded_request(
+                    ApiEndpoint::WorkspaceManagerWs,
+                    "moveResources",
+                    &fields,
+                )
                 .await
             {
                 Ok(_) => result["movedTo"] = serde_json::json!(parent),
@@ -1031,20 +1152,34 @@ impl WebPublication {
             ("clientId", client_id.clone()),
             ("filename", file_name),
             ("creationSource", "DESKTOP".to_string()),
-            ("tmpId", std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis().to_string())
-                .unwrap_or_default()),
+            (
+                "tmpId",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis().to_string())
+                    .unwrap_or_default(),
+            ),
         ];
-        let file = FilePart { field: "file", path: request.file_path.clone() };
+        let file = FilePart {
+            field: "file",
+            path: request.file_path.clone(),
+        };
 
         let created = self
-            .make_post_form_request(ApiEndpoint::GenerationWs, "createPublication", fields, Some(file))
+            .make_post_form_request(
+                ApiEndpoint::GenerationWs,
+                "createPublication",
+                fields,
+                Some(file),
+            )
             .await?;
 
         let publication_gid = Self::extract_global_id(&created.data).ok_or_else(|| {
             McpError::internal_error(
-                format!("globalId not found in createPublication response: {}", created.data),
+                format!(
+                    "globalId not found in createPublication response: {}",
+                    created.data
+                ),
                 None,
             )
         })?;
@@ -1055,7 +1190,13 @@ impl WebPublication {
         });
 
         // Rename before waiting, so the label is applied even if the wait fails or is cancelled.
-        self.apply_label(&client_id, publication_gid, request.label.as_ref(), &mut result).await;
+        self.apply_label(
+            &client_id,
+            publication_gid,
+            request.label.as_ref(),
+            &mut result,
+        )
+        .await;
 
         // A failed wait is recorded in `result["waitError"]` instead of being returned, so the
         // caller still gets the globalId of the publication that already exists.
@@ -1078,7 +1219,9 @@ impl WebPublication {
         Parameters(request): Parameters<PublicationRequest>,
     ) -> Result<CallToolResult, McpError> {
         let client_id = self.client_id(request.client_id);
-        let response = self.publication_progress(&client_id, request.publication_gid).await?;
+        let response = self
+            .publication_progress(&client_id, request.publication_gid)
+            .await?;
         Self::text_result(&response.data)
     }
 
@@ -1104,7 +1247,10 @@ impl WebPublication {
 
         let playlist_gid = Self::extract_global_id(&created.data).ok_or_else(|| {
             McpError::internal_error(
-                format!("globalId not found in createNewPlaylist response: {}", created.data),
+                format!(
+                    "globalId not found in createNewPlaylist response: {}",
+                    created.data
+                ),
                 None,
             )
         })?;
@@ -1114,7 +1260,13 @@ impl WebPublication {
             "resource": created.data,
         });
 
-        self.apply_label(&client_id, playlist_gid, request.label.as_ref(), &mut result).await;
+        self.apply_label(
+            &client_id,
+            playlist_gid,
+            request.label.as_ref(),
+            &mut result,
+        )
+        .await;
 
         Self::text_result(&result)
     }
@@ -1166,14 +1318,21 @@ impl WebPublication {
     ) -> Result<CallToolResult, McpError> {
         let client_id = self.client_id(request.client_id);
         let file_name = Self::file_name(&request.file_path)?;
-        tracing::info!("Uploading component '{}' to folder {}", request.file_path, request.folder_gid);
+        tracing::info!(
+            "Uploading component '{}' to folder {}",
+            request.file_path,
+            request.folder_gid
+        );
 
         let fields = vec![
             ("clientId", client_id.clone()),
             ("folderGId", request.folder_gid.to_string()),
             ("filename", file_name),
         ];
-        let file = FilePart { field: "file", path: request.file_path.clone() };
+        let file = FilePart {
+            field: "file",
+            path: request.file_path.clone(),
+        };
 
         let created = self
             .make_post_form_request(ApiEndpoint::PageManagerWs, "createPage", fields, Some(file))
@@ -1181,7 +1340,10 @@ impl WebPublication {
 
         let component_gid = Self::extract_global_id(&created.data).ok_or_else(|| {
             McpError::internal_error(
-                format!("globalId not found in createPage response: {}", created.data),
+                format!(
+                    "globalId not found in createPage response: {}",
+                    created.data
+                ),
                 None,
             )
         })?;
@@ -1191,7 +1353,13 @@ impl WebPublication {
             "resource": created.data,
         });
 
-        self.apply_label(&client_id, component_gid, request.label.as_ref(), &mut result).await;
+        self.apply_label(
+            &client_id,
+            component_gid,
+            request.label.as_ref(),
+            &mut result,
+        )
+        .await;
 
         Self::text_result(&result)
     }
@@ -1204,7 +1372,8 @@ impl WebPublication {
         &self,
         Parameters(request): Parameters<UploadWishlistFileRequest>,
     ) -> Result<CallToolResult, McpError> {
-        self.upload_wishlist_file("uploadWishlistProducts", request).await
+        self.upload_wishlist_file("uploadWishlistProducts", request)
+            .await
     }
 
     #[tool(
@@ -1215,7 +1384,8 @@ impl WebPublication {
         &self,
         Parameters(request): Parameters<UploadWishlistFileRequest>,
     ) -> Result<CallToolResult, McpError> {
-        self.upload_wishlist_file("uploadWishlistImages", request).await
+        self.upload_wishlist_file("uploadWishlistImages", request)
+            .await
     }
 }
 
@@ -1240,7 +1410,10 @@ impl WebPublication {
             ("publicationGId", request.publication_gid.to_string()),
             ("filename", file_name),
         ];
-        let file = FilePart { field: "file", path: request.file_path.clone() };
+        let file = FilePart {
+            field: "file",
+            path: request.file_path.clone(),
+        };
 
         let response = self
             .make_post_form_request(ApiEndpoint::GenerationWs, method, fields, Some(file))
