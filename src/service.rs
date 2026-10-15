@@ -19,8 +19,8 @@ use crate::models::{
     DuplicateResourceRequest, GetImageRequest, GetRecentResourcesRequest, GetResourceRequest,
     GetTemplateTxtFileRequest, IncludeExtPagesRequest, ListFoldersRequest, ListResourcesRequest,
     MoveResourcesRequest, PublicationRequest, RenameResourceRequest, SaveTemplateTxtFileRequest,
-    SetCustomAdminUrlRequest, ToggleWishlistRequest, TrashResourcesRequest, UploadComponentRequest,
-    UploadWishlistFileRequest,
+    SetCustomAdminUrlRequest, ToggleWishlistRequest, TrashResourcesRequest, UpdateAssetRequest,
+    UploadComponentRequest, UploadWishlistFileRequest,
 };
 
 /// Delay between two polls of getPublicationProgress.
@@ -107,6 +107,15 @@ struct FilePart {
     field: &'static str,
     /// Absolute path of the local file.
     path: String,
+}
+
+/// Upstream call used by `update_asset`, chosen from the resource type.
+#[derive(Debug, PartialEq, Eq)]
+enum AssetUpdateTarget {
+    /// `pageManagerWs/updatePage` (COMPONENT resources).
+    Component,
+    /// `workspaceManagerWs/updateResource` (images, PDFs and other drive files).
+    DriveFile,
 }
 
 #[derive(Clone)]
@@ -598,6 +607,44 @@ impl WebPublication {
         ))
     }
 
+    /// Picks the upstream call that replaces the file of an existing resource, from its `type`.
+    /// Components have their own service; publications are not assets and are refused.
+    fn update_asset_target(resource_type: &str) -> Result<AssetUpdateTarget, McpError> {
+        match resource_type {
+            "COMPONENT" => Ok(AssetUpdateTarget::Component),
+            "PUBLICATION" => Err(McpError::invalid_params(
+                "resource_gid is a PUBLICATION, not an asset: update_asset only replaces components and drive files (images, PDFs...)",
+                None,
+            )),
+            "DIRECTORY" => Err(McpError::invalid_params(
+                "resource_gid is a folder, not an asset",
+                None,
+            )),
+            "" => Err(McpError::internal_error(
+                "type not found in getResource response",
+                None,
+            )),
+            _ => Ok(AssetUpdateTarget::DriveFile),
+        }
+    }
+
+    /// Validates the optional targetResolution of updateResource; the upstream default is STANDARD.
+    fn target_resolution(value: Option<&String>) -> Result<String, McpError> {
+        let resolution = value
+            .map(|v| v.to_uppercase())
+            .unwrap_or_else(|| "STANDARD".to_string());
+        match resolution.as_str() {
+            "LOW" | "STANDARD" | "HIGH" => Ok(resolution),
+            other => Err(McpError::invalid_params(
+                format!(
+                    "target_resolution must be LOW, STANDARD or HIGH, got '{}'",
+                    other
+                ),
+                None,
+            )),
+        }
+    }
+
     fn text_result(data: &serde_json::Value) -> Result<CallToolResult, McpError> {
         Ok(CallToolResult::success(vec![Content::text(
             Self::format_json(data)?,
@@ -640,6 +687,7 @@ impl ServerHandler for WebPublication {
                 create_playlist creates an empty playlist; include_ext_pages adds pages of a source publication into it; \
                 duplicate_resource clones a publication/playlist (optionally renaming and moving the copy); set_custom_admin_url sets the configurator url in common-ui.xml; \
                 toggle_wishlist enables the wishlist; upload_component uploads a zip as a COMPONENT resource served at DRIVE_URL/{clientId}/{componentGlobalId}/; \
+                update_asset replaces the file of an existing component or drive image/file while keeping its globalId and URL; \
                 upload_wishlist_products / upload_wishlist_images attach the products Excel and the product images zip to a wishlist publication."
                     .to_string(),
             ),
@@ -1371,6 +1419,83 @@ impl WebPublication {
     }
 
     #[tool(
+        description = "Replace the file of an existing asset while keeping its globalId and URL: \
+    a COMPONENT (upload a new .zip of the HTML app, e.g. a new build of the configurator) or a drive file such as an image or a PDF. \
+    Not for publications. Provide resource_gid (from list_resources or upload_component -> componentGId) and the absolute file_path. \
+    The tool reads the resource type first and picks the matching upstream call. \
+    For images, target_resolution (LOW/STANDARD/HIGH, default STANDARD) sets the resolution kept by the drive."
+    )]
+    async fn update_asset(
+        &self,
+        Parameters(request): Parameters<UpdateAssetRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let client_id = self.client_id(request.client_id);
+        let file_name = Self::file_name(&request.file_path)?;
+        let target_resolution = Self::target_resolution(request.target_resolution.as_ref())?;
+        tracing::info!(
+            "Updating asset {} with '{}'",
+            request.resource_gid,
+            request.file_path
+        );
+
+        let resource_gid = request.resource_gid.to_string();
+        let params = [
+            ("clientId", client_id.as_str()),
+            ("resourceGId", resource_gid.as_str()),
+        ];
+        let resource = self
+            .make_get_request(ApiEndpoint::WorkspaceManagerWs, "getResource", &params)
+            .await?;
+        let resource_type = resource.data["type"].as_str().unwrap_or("");
+        let target = Self::update_asset_target(resource_type)?;
+        // Drive files are served under their hard name (images become .webp), so the served
+        // path comes from the resource, not from the globalId.
+        let rel_url = resource.data["relUrl"]
+            .as_str()
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("{}/{}/", client_id, request.resource_gid));
+
+        let file = FilePart {
+            field: "file",
+            path: request.file_path.clone(),
+        };
+        let (endpoint, method, fields) = match target {
+            AssetUpdateTarget::Component => (
+                ApiEndpoint::PageManagerWs,
+                "updatePage",
+                vec![
+                    ("clientId", client_id.clone()),
+                    ("pageGId", resource_gid.clone()),
+                    ("filename", file_name),
+                ],
+            ),
+            AssetUpdateTarget::DriveFile => (
+                ApiEndpoint::WorkspaceManagerWs,
+                "updateResource",
+                vec![
+                    ("clientId", client_id.clone()),
+                    ("globalId", resource_gid.clone()),
+                    ("filename", file_name),
+                    ("targetResolution", target_resolution),
+                ],
+            ),
+        };
+
+        let updated = self
+            .make_post_form_request(endpoint, method, fields, Some(file))
+            .await?;
+
+        let result = serde_json::json!({
+            "resourceGId": request.resource_gid,
+            "type": resource_type,
+            "upstreamMethod": format!("{}/{}", endpoint.path(), method),
+            "url": format!("{}{}", self.config.drive_url, rel_url),
+            "response": updated.data,
+        });
+        Self::text_result(&result)
+    }
+
+    #[tool(
         description = "Upload the wishlist products Excel file (.xls/.xlsx) of a publication. \
     Provide the publication_gid and the absolute file_path. The wishlist must be enabled on the publication first (toggle_wishlist)."
     )]
@@ -1425,5 +1550,43 @@ impl WebPublication {
             .make_post_form_request(ApiEndpoint::GenerationWs, method, fields, Some(file))
             .await?;
         Self::text_result(&response.data)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn update_asset_target_dispatches_on_type() {
+        assert_eq!(
+            WebPublication::update_asset_target("COMPONENT").unwrap(),
+            AssetUpdateTarget::Component
+        );
+        assert_eq!(
+            WebPublication::update_asset_target("IMAGE").unwrap(),
+            AssetUpdateTarget::DriveFile
+        );
+        assert_eq!(
+            WebPublication::update_asset_target("FILE").unwrap(),
+            AssetUpdateTarget::DriveFile
+        );
+    }
+
+    #[test]
+    fn update_asset_target_refuses_non_assets() {
+        assert!(WebPublication::update_asset_target("PUBLICATION").is_err());
+        assert!(WebPublication::update_asset_target("DIRECTORY").is_err());
+        assert!(WebPublication::update_asset_target("").is_err());
+    }
+
+    #[test]
+    fn target_resolution_defaults_and_validates() {
+        assert_eq!(WebPublication::target_resolution(None).unwrap(), "STANDARD");
+        assert_eq!(
+            WebPublication::target_resolution(Some(&"high".to_string())).unwrap(),
+            "HIGH"
+        );
+        assert!(WebPublication::target_resolution(Some(&"ULTRA".to_string())).is_err());
     }
 }

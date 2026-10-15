@@ -17,6 +17,7 @@ MCP server for Webpublication API - provides access to workspace management, gen
 - **get_publication_progress**: Poll the generation status of a publication
 - **create_playlist** + **include_ext_pages**: Create an empty playlist and add pages of another publication into it
 - **upload_component**: Upload a zip as a COMPONENT served at `DRIVE_URL/{clientId}/{componentGId}/`
+- **update_asset**: Replace the file of an existing component or drive file (image, PDF...) while keeping its globalId and URL
 - **upload_wishlist_products** / **upload_wishlist_images**: Attach the products Excel and the images zip to a wishlist publication
 - **get_template_txt_file** / **save_template_txt_file**: Read/overwrite a text file of a publication's templates folder (e.g. `common-ui.xml`)
 - **set_custom_admin_url**: Insert/replace `<custom_admin url="..."/>` in `common-ui.xml` > `<configs>` (configurator URL shown in the manager)
@@ -178,6 +179,11 @@ At the root of your project, add the same snippet to `.mcp.json`.
 - **Input**: `file_path` (absolute local .zip), `folder_gid`, `label` (optional)
 - **Output**: `componentGId`, `url` (`DRIVE_URL/{clientId}/{componentGId}/`) and the created COMPONENT resource
 - **API**: `POST pageManagerWs/createPage` (multipart: file, filename, clientId, folderGId)
+
+### update_asset
+- **Input**: `resource_gid` (a COMPONENT or a drive file such as an image; not a publication), `file_path` (absolute local file), `target_resolution` (images only: LOW, STANDARD or HIGH, default STANDARD)
+- **Output**: `resourceGId`, the resource `type`, the `upstreamMethod` used, the served `url` (`DRIVE_URL` + the resource `relUrl`) and the upstream response
+- **API**: `GET workspaceManagerWs/getResource` to read the type, then `POST pageManagerWs/updatePage` (multipart: file, filename, clientId, pageGId) for a COMPONENT, or `POST workspaceManagerWs/updateResource` (multipart: file, filename, clientId, globalId, targetResolution) for any other drive file
 
 ### upload_wishlist_products / upload_wishlist_images
 - **Input**: `publication_gid`, `file_path` (.xlsx for products; .zip of images or a single image for images)

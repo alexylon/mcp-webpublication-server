@@ -237,3 +237,18 @@ pub struct DuplicateResourceRequest {
     #[serde(default)]
     pub client_id: Option<i64>,
 }
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct UpdateAssetRequest {
+    /// globalId of the asset to replace: a COMPONENT (HTML zip) or a drive file such as an image or a PDF.
+    /// Not for publications. Find it with list_resources.
+    pub resource_gid: i64,
+    /// Absolute path of the local file that replaces the current one (.zip for a component, image file for an image...).
+    pub file_path: String,
+    /// Image resolution kept by the drive, for images only: LOW, STANDARD (default) or HIGH. Ignored for components.
+    #[serde(default)]
+    pub target_resolution: Option<String>,
+    /// Client (customer) id. Omit it to use the CLIENT_ID configured in the environment.
+    #[serde(default)]
+    pub client_id: Option<i64>,
+}
